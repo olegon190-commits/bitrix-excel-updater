@@ -17,7 +17,7 @@ def update_excel():
     file_info = r.json()
     download_url = file_info['result']['DOWNLOAD_URL']
     
-# Скачиваем файл
+    # Скачиваем файл
     r = requests.get(download_url)
     wb = openpyxl.load_workbook(io.BytesIO(r.content), data_only=True, keep_vba=False)
     ws = wb.active
