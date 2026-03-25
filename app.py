@@ -77,9 +77,11 @@ def update_excel():
         wb.save(output)
         output.seek(0)
         
+        # Загружаем обратно на Bitrix
         upload_r = requests.post(
-            f'{webhook}/disk.file.uploadversion.json?id={file_id}',
-            files={'file': ('file.xlsx', output, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
+            f'{webhook}/disk.file.uploadversion.json',
+            data={'id': file_id},
+            files={'file': ('file.xlsx', output.read(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
         )
         
         return jsonify({'status': 'ok', 'updated': updated, 'result': upload_r.json()})
