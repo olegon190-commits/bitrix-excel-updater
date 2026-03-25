@@ -82,14 +82,10 @@ def update_excel():
         upload_url_data = upload_url_r.json()
         upload_url = upload_url_data['result']['uploadUrl']
         
-        # Загружаем файл по полученному URL
-        upload_r = requests.put(
-            upload_url,
-            data=output.read(),
-            headers={'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
-        )
+        # Отладка - смотрим что возвращает uploadversion
+        upload_url_r = requests.get(f'{webhook}/disk.file.uploadversion.json?id={file_id}')
         
-        return jsonify({'status': 'ok', 'updated': updated, 'upload_status': upload_r.status_code})
+        return jsonify({'status': 'ok', 'updated': updated, 'debug': upload_url_r.json()})
     
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
