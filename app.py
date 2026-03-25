@@ -4,6 +4,7 @@ import io
 import zipfile
 import re
 import traceback
+import base64
 
 app = Flask(__name__)
 
@@ -67,9 +68,12 @@ def update_excel():
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
-        upload_url_r = requests.get(f'{webhook}/disk.file.uploadversion.json?id={file_id}')
-        upload_debug = upload_url_r.json()
-        return jsonify({'status': 'ok', 'updated': updated, 'debug': upload_debug})
+        file_content_b64 = base64.b64encode(output.read()).decode('utf-8')
+        upload_r = requests.post(
+            f'{webhook}/disk.file.uploadversion.json',
+            json={'id': file_id, 'fileContent': ['file.xlsx', file_content_b64]}
+        )
+        return jsonify({'status': 'ok', 'updated': updated, 'result': upload_r.json()})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e), 'trace': traceback.format_exc()}), 500
 
