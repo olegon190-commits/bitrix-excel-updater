@@ -85,7 +85,9 @@ def update_excel():
             tt_code = update.get('tt_code')
             fact = update.get('fact')
             for row in ws.iter_rows(min_row=header_row + 1):
-                if str(row[tt_col - 1].value).strip() == str(tt_code).strip():
+                cell_val = str(row[tt_col - 1].value).strip().replace('\xa0', '').replace(' ', '')
+                tt_clean = str(tt_code).strip().replace('\xa0', '').replace(' ', '')
+                if cell_val == tt_clean:
                     row[sum_col - 1].value = round(float(fact), 2)
                     updated += 1
                     break
