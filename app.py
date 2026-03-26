@@ -5,8 +5,17 @@ import zipfile
 import re
 import traceback
 import base64
+from datetime import datetime
 
 app = Flask(__name__)
+
+DAYS_RU = {0: 'пн', 1: 'вт', 2: 'ср', 3: 'чт', 4: 'пт', 5: 'сб', 6: 'вс'}
+
+def get_today_sheet_name():
+    today = datetime.now()
+    day = today.day
+    weekday = DAYS_RU[today.weekday()]
+    return f"{day:02d} {weekday}"
 
 def load_workbook_safe(content):
     zin = zipfile.ZipFile(io.BytesIO(content))
@@ -34,17 +43,29 @@ def update_excel():
         webhook = data.get('webhook')
         file_id = data.get('file_id')
         updates = data.get('updates')
+
         r = requests.get(f'{webhook}/disk.file.get.json?id={file_id}')
         file_info = r.json()
         download_url = file_info['result']['DOWNLOAD_URL']
+
         r = requests.get(download_url)
         clean_content = load_workbook_safe(r.content)
+
         import openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(clean_content))
-        ws = wb.active
+
+        # Определяем сегодняшнюю вкладку
+        today_sheet = get_today_sheet_name()
+        
+        if today_sheet in wb.sheetnames:
+            ws = wb[today_sheet]
+        else:
+            return jsonify({'status': 'error', 'message': f'Вкладка {today_sheet} не найдена', 'sheets': wb.sheetnames}), 400
+
         header_row = None
         sum_col = None
         tt_col = None
+
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value == 'Сумма заявки':
@@ -54,8 +75,10 @@ def update_excel():
                     tt_col = cell.column
             if header_row:
                 break
+
         if not header_row or not sum_col or not tt_col:
             return jsonify({'status': 'error', 'message': 'Колонки не найдены'}), 400
+
         updated = 0
         for update in updates:
             tt_code = update.get('tt_code')
@@ -65,15 +88,19 @@ def update_excel():
                     row[sum_col - 1].value = fact
                     updated += 1
                     break
+
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
         file_content_b64 = base64.b64encode(output.read()).decode('utf-8')
+
         upload_r = requests.post(
             f'{webhook}/disk.file.uploadversion.json',
             json={'id': file_id, 'fileContent': ['file.xlsx', file_content_b64]}
         )
-        return jsonify({'status': 'ok', 'updated': updated, 'result': upload_r.json()})
+
+        return jsonify({'status': 'ok', 'updated': updated, 'sheet': today_sheet, 'result': upload_r.json()})
+
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e), 'trace': traceback.format_exc()}), 500
 
