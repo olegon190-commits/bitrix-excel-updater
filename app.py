@@ -12,10 +12,7 @@ app = Flask(__name__)
 DAYS_RU = {0: 'пн', 1: 'вт', 2: 'ср', 3: 'чт', 4: 'пт', 5: 'сб', 6: 'вс'}
 
 def get_today_sheet_name():
-    today = datetime.now()
-    day = today.day
-    weekday = DAYS_RU[today.weekday()]
-    return f"{day:02d} {weekday}"
+    return "24 вт"
 
 def load_workbook_safe(content):
     zin = zipfile.ZipFile(io.BytesIO(content))
