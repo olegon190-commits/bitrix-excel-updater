@@ -5,14 +5,13 @@ import zipfile
 import re
 import traceback
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
 DAYS_RU = {0: 'пн', 1: 'вт', 2: 'ср', 3: 'чт', 4: 'пт', 5: 'сб', 6: 'вс'}
 
-def get_today_sheet_name():
-    from datetime import timedelta
+def get_yesterday_sheet_name():
     today = datetime.now() - timedelta(days=1)
     day = today.day
     weekday = DAYS_RU[today.weekday()]
@@ -37,6 +36,41 @@ def load_workbook_safe(content):
     zout_buffer.seek(0)
     return zout_buffer.read()
 
+def get_sheet_day(sheet_name):
+    """Извлекаем число из названия вкладки типа '25 ср'"""
+    try:
+        return int(sheet_name.split()[0])
+    except:
+        return None
+
+def get_previous_sheets(wb, today_sheet):
+    """Возвращаем все вкладки с числом меньше сегодняшней"""
+    today_day = get_sheet_day(today_sheet)
+    if today_day is None:
+        return []
+    prev = []
+    for name in wb.sheetnames:
+        if name == 'Контроль':
+            continue
+        day = get_sheet_day(name)
+        if day is not None and day < today_day:
+            prev.append(name)
+    return prev
+
+def find_columns(ws):
+    """Находим нужные колонки по заголовку"""
+    tt_col = sum_col = plan_col = dev_col = header_row = None
+    for row in ws.iter_rows():
+        for cell in row:
+            v = cell.value
+            if v == 'Код ТТ': tt_col = cell.column
+            if v == 'Сумма заявки': sum_col = cell.column; header_row = cell.row
+            if v == 'План сумма': plan_col = cell.column
+            if v == 'Отклонения дня': dev_col = cell.column
+        if header_row:
+            break
+    return tt_col, sum_col, plan_col, dev_col, header_row
+
 @app.route('/update-excel', methods=['POST'])
 def update_excel():
     try:
@@ -55,43 +89,63 @@ def update_excel():
         import openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(clean_content))
 
-        # Определяем сегодняшнюю вкладку
-        today_sheet = get_today_sheet_name()
-        
-        if today_sheet in wb.sheetnames:
-            ws = wb[today_sheet]
-        else:
+        today_sheet = get_yesterday_sheet_name()
+        if today_sheet not in wb.sheetnames:
             return jsonify({'status': 'error', 'message': f'Вкладка {today_sheet} не найдена', 'sheets': wb.sheetnames}), 400
 
-        header_row = None
-        sum_col = None
-        tt_col = None
-
-        for row in ws.iter_rows():
-            for cell in row:
-                if cell.value == 'Сумма заявки':
-                    sum_col = cell.column
-                    header_row = cell.row
-                if cell.value == 'Код ТТ':
-                    tt_col = cell.column
-            if header_row:
-                break
+        ws = wb[today_sheet]
+        tt_col, sum_col, plan_col, dev_col, header_row = find_columns(ws)
 
         if not header_row or not sum_col or not tt_col:
             return jsonify({'status': 'error', 'message': 'Колонки не найдены'}), 400
 
-        updated = 0
-        for update in updates:
-            tt_code = update.get('tt_code')
-            fact = update.get('fact')
-            for row in ws.iter_rows(min_row=header_row + 1):
-                cell_val = str(row[tt_col - 1].value).strip().replace('\xa0', '').replace(' ', '')
-                tt_clean = str(tt_code).strip().replace('\xa0', '').replace(' ', '')
-                if cell_val == tt_clean:
-                    row[sum_col - 1].value = round(float(fact), 2)
-                    updated += 1
-                    break
+        # Строим словарь обновлений из 1С
+        updates_map = {str(u.get('tt_code')).strip(): u.get('fact') for u in updates}
 
+        # Шаг 1 — записываем факт в сегодняшнюю вкладку
+        updated = 0
+        for row in ws.iter_rows(min_row=header_row + 1):
+            tt = str(row[tt_col - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
+            if not tt:
+                continue
+            if tt in updates_map:
+                row[sum_col - 1].value = round(float(updates_map[tt]), 2)
+                updated += 1
+
+        # Шаг 2 — считаем накопленное отклонение по предыдущим вкладкам
+        prev_sheets = get_previous_sheets(wb, today_sheet)
+
+        # Для каждой предыдущей вкладки собираем план и факт по ТТ
+        accumulated = {}  # tt_code -> накопленное отклонение
+
+        for sheet_name in prev_sheets:
+            ws_prev = wb[sheet_name]
+            tt_col_p, sum_col_p, plan_col_p, _, header_row_p = find_columns(ws_prev)
+            if not header_row_p or not tt_col_p or not sum_col_p or not plan_col_p:
+                continue
+            for row in ws_prev.iter_rows(min_row=header_row_p + 1):
+                tt = str(row[tt_col_p - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
+                if not tt:
+                    continue
+                plan = float(row[plan_col_p - 1].value or 0)
+                fact = float(row[sum_col_p - 1].value or 0)
+                if plan == 0:
+                    continue
+                deviation = plan - fact
+                accumulated[tt] = accumulated.get(tt, 0) + deviation
+
+        # Шаг 3 — записываем отклонения в сегодняшнюю вкладку
+        dev_updated = 0
+        if dev_col:
+            for row in ws.iter_rows(min_row=header_row + 1):
+                tt = str(row[tt_col - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
+                if not tt:
+                    continue
+                if tt in accumulated:
+                    row[dev_col - 1].value = round(accumulated[tt], 2)
+                    dev_updated += 1
+
+        # Сохраняем и загружаем обратно
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -102,7 +156,14 @@ def update_excel():
             json={'id': file_id, 'fileContent': ['file.xlsx', file_content_b64]}
         )
 
-        return jsonify({'status': 'ok', 'updated': updated, 'sheet': today_sheet, 'result': upload_r.json()})
+        return jsonify({
+            'status': 'ok',
+            'sheet': today_sheet,
+            'updated_fact': updated,
+            'updated_deviation': dev_updated,
+            'prev_sheets_processed': len(prev_sheets),
+            'result': upload_r.json()
+        })
 
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e), 'trace': traceback.format_exc()}), 500
