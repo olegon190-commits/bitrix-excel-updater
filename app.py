@@ -12,9 +12,12 @@ app = Flask(__name__)
 DAYS_RU = {0: 'пн', 1: 'вт', 2: 'ср', 3: 'чт', 4: 'пт', 5: 'сб', 6: 'вс'}
 
 def get_yesterday_sheet_name():
-    today = datetime.now() - timedelta(days=1)
-    day = today.day
-    weekday = DAYS_RU[today.weekday()]
+    d = datetime.now() - timedelta(days=1)
+    # Пропускаем выходные
+    while d.weekday() >= 5:  # 5=суббота, 6=воскресенье
+        d = d - timedelta(days=1)
+    day = d.day
+    weekday = DAYS_RU[d.weekday()]
     return f"{day:02d} {weekday}"
 
 def load_workbook_safe(content):
