@@ -12,8 +12,7 @@ app = Flask(__name__)
 DAYS_RU = {0: 'пн', 1: 'вт', 2: 'ср', 3: 'чт', 4: 'пт', 5: 'сб', 6: 'вс'}
 
 def get_yesterday_sheet_name():
-    d = datetime.now()
-    # Пропускаем выходные
+    d = datetime.now() - timedelta(days=1)
     while d.weekday() >= 5:
         d = d - timedelta(days=1)
     day = d.day
