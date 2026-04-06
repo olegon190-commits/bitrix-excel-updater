@@ -13,7 +13,7 @@ DAYS_RU = {0: 'пн', 1: 'вт', 2: 'ср', 3: 'чт', 4: 'пт', 5: 'сб', 6: 
 
 def get_yesterday_sheet_name():
     MSK = timezone(timedelta(hours=3))
-    d = datetime.now(MSK)
+    d = datetime.now(MSK) - timedelta(days=1)
     while d.weekday() >= 5:
         d = d - timedelta(days=1)
     day = d.day
