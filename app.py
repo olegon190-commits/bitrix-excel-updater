@@ -116,7 +116,7 @@ def update_excel():
                 row[sum_col - 1].value = round(float(updates_map[tt]), 2)
                 updated += 1
 
-        # Шаг 2 — считаем накопленное отклонение по колонке "Отклонение"
+        # Шаг 2 — считаем накопленное отклонение
         prev_sheets = get_previous_sheets(wb, today_sheet)
         accumulated = {}
 
@@ -150,13 +150,16 @@ def update_excel():
 
         # Шаг 4 — добавляем внеплановые ТТ
         unplanned_added = 0
+        debug_not_found = []
         for tt_code, fact in updates_map.items():
-            if tt_code not in found_codes and tt_code in RESHETOVA_CODES:
-                new_row = [None] * ws.max_column
-                new_row[tt_col - 1] = tt_code
-                new_row[sum_col - 1] = round(float(fact), 2)
-                ws.append(new_row)
-                unplanned_added += 1
+            if tt_code not in found_codes:
+                debug_not_found.append(tt_code)
+                if tt_code in RESHETOVA_CODES and fact and float(fact) != 0:
+                    new_row = [None] * ws.max_column
+                    new_row[tt_col - 1] = tt_code
+                    new_row[sum_col - 1] = round(float(fact), 2)
+                    ws.append(new_row)
+                    unplanned_added += 1
 
         output = io.BytesIO()
         wb.save(output)
@@ -174,6 +177,7 @@ def update_excel():
             'updated_fact': updated,
             'updated_deviation': dev_updated,
             'unplanned_added': unplanned_added,
+            'debug_not_found': debug_not_found,
             'prev_sheets_processed': len(prev_sheets),
             'result': upload_r.json()
         })
