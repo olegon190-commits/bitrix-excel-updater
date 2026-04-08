@@ -40,14 +40,12 @@ def load_workbook_safe(content):
     return zout_buffer.read()
 
 def get_sheet_day(sheet_name):
-    """Извлекаем число из названия вкладки типа '25 ср'"""
     try:
         return int(sheet_name.split()[0])
     except:
         return None
 
 def get_previous_sheets(wb, today_sheet):
-    """Возвращаем все вкладки с числом меньше сегодняшней"""
     today_day = get_sheet_day(today_sheet)
     if today_day is None:
         return []
@@ -61,18 +59,18 @@ def get_previous_sheets(wb, today_sheet):
     return prev
 
 def find_columns(ws):
-    """Находим нужные колонки по заголовку"""
-    tt_col = sum_col = plan_col = dev_col = header_row = None
-    for row in ws.iter_rows():
+    tt_col = sum_col = plan_col = dev_col = otklonenie_col = header_row = None
+    for row in ws.iter_rows(max_row=5):
         for cell in row:
             v = cell.value
             if v == 'Код ТТ': tt_col = cell.column
             if v == 'Сумма заявки': sum_col = cell.column; header_row = cell.row
             if v == 'План сумма': plan_col = cell.column
             if v == 'Отклонения дня': dev_col = cell.column
+            if v == 'Отклонение': otklonenie_col = cell.column
         if header_row:
             break
-    return tt_col, sum_col, plan_col, dev_col, header_row
+    return tt_col, sum_col, plan_col, dev_col, otklonenie_col, header_row
 
 @app.route('/update-excel', methods=['POST'])
 def update_excel():
@@ -97,15 +95,14 @@ def update_excel():
             return jsonify({'status': 'error', 'message': f'Вкладка {today_sheet} не найдена', 'sheets': wb.sheetnames}), 400
 
         ws = wb[today_sheet]
-        tt_col, sum_col, plan_col, dev_col, header_row = find_columns(ws)
+        tt_col, sum_col, plan_col, dev_col, otklonenie_col, header_row = find_columns(ws)
 
         if not header_row or not sum_col or not tt_col:
             return jsonify({'status': 'error', 'message': 'Колонки не найдены'}), 400
 
-        # Строим словарь обновлений из 1С
         updates_map = {str(u.get('tt_code')).strip(): u.get('fact') for u in updates}
 
-        # Шаг 1 — записываем факт в сегодняшнюю вкладку
+        # Шаг 1 — записываем факт
         updated = 0
         for row in ws.iter_rows(min_row=header_row + 1):
             tt = str(row[tt_col - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
@@ -115,40 +112,39 @@ def update_excel():
                 row[sum_col - 1].value = round(float(updates_map[tt]), 2)
                 updated += 1
 
-        # Шаг 2 — считаем накопленное отклонение по предыдущим вкладкам
+        # Шаг 2 — считаем накопленное отклонение по колонке "Отклонение"
         prev_sheets = get_previous_sheets(wb, today_sheet)
-
-        # Для каждой предыдущей вкладки собираем план и факт по ТТ
-        accumulated = {}  # tt_code -> накопленное отклонение
+        accumulated = {}
 
         for sheet_name in prev_sheets:
             ws_prev = wb[sheet_name]
-            tt_col_p, sum_col_p, plan_col_p, _, header_row_p = find_columns(ws_prev)
-            if not header_row_p or not tt_col_p or not sum_col_p or not plan_col_p:
+            tt_col_p, sum_col_p, plan_col_p, _, otklonenie_col_p, header_row_p = find_columns(ws_prev)
+            if not header_row_p or not tt_col_p:
+                continue
+            if not otklonenie_col_p:
                 continue
             for row in ws_prev.iter_rows(min_row=header_row_p + 1):
                 tt = str(row[tt_col_p - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
                 if not tt:
                     continue
-                plan = float(row[plan_col_p - 1].value or 0)
-                fact = float(row[sum_col_p - 1].value or 0)
-                if plan == 0:
+                otklonenie = row[otklonenie_col_p - 1].value
+                # Пропускаем если это формула или пусто
+                if otklonenie is None or isinstance(otklonenie, str):
                     continue
-                deviation = plan - fact
-                accumulated[tt] = accumulated.get(tt, 0) + deviation
+                otklonenie = float(otklonenie)
+                accumulated[tt] = accumulated.get(tt, 0) + otklonenie
 
-        # Шаг 3 — записываем отклонения в сегодняшнюю вкладку
+        # Шаг 3 — записываем отклонения дня
         dev_updated = 0
         if dev_col:
             for row in ws.iter_rows(min_row=header_row + 1):
                 tt = str(row[tt_col - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
                 if not tt:
                     continue
-                if tt in accumulated:
+                if tt in accumulated and accumulated[tt] != 0:
                     row[dev_col - 1].value = round(accumulated[tt], 2)
                     dev_updated += 1
 
-        # Сохраняем и загружаем обратно
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
