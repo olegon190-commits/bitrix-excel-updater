@@ -91,6 +91,7 @@ def update_excel():
 
         import openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(clean_content))
+        wb_readonly = openpyxl.load_workbook(io.BytesIO(clean_content), data_only=True)
 
         today_sheet = get_yesterday_sheet_name()
         if today_sheet not in wb.sheetnames:
@@ -116,12 +117,12 @@ def update_excel():
                 row[sum_col - 1].value = round(float(updates_map[tt]), 2)
                 updated += 1
 
-        # Шаг 2 — считаем накопленное отклонение
+        # Шаг 2 — считаем накопленное отклонение через wb_readonly
         prev_sheets = get_previous_sheets(wb, today_sheet)
         accumulated = {}
 
         for sheet_name in prev_sheets:
-            ws_prev = wb[sheet_name]
+            ws_prev = wb_readonly[sheet_name]
             tt_col_p, sum_col_p, plan_col_p, _, otklonenie_col_p, header_row_p = find_columns(ws_prev)
             if not header_row_p or not tt_col_p:
                 continue
