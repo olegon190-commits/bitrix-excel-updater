@@ -74,6 +74,14 @@ def find_columns(ws):
             break
     return tt_col, sum_col, plan_col, dev_col, otklonenie_col, header_row
 
+def find_itogo_row(ws):
+    """Находим строку с Итого"""
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value and str(cell.value).strip() == 'Итого':
+                return cell.row
+    return None
+
 @app.route('/update-excel', methods=['POST'])
 def update_excel():
     try:
@@ -149,17 +157,24 @@ def update_excel():
                     row[dev_col - 1].value = round(accumulated[tt], 2)
                     dev_updated += 1
 
-        # Шаг 4 — добавляем внеплановые ТТ
+        # Шаг 4 — добавляем внеплановые ТТ после строки Итого + 1
         unplanned_added = 0
         debug_not_found = []
+        
+        itogo_row = find_itogo_row(ws)
+        insert_row = itogo_row + 2 if itogo_row else None
+
         for tt_code, fact in updates_map.items():
             if tt_code not in found_codes:
                 debug_not_found.append(tt_code)
                 if tt_code in RESHETOVA_CODES and fact and float(fact) != 0:
-                    new_row = [None] * ws.max_column
-                    new_row[tt_col - 1] = tt_code
-                    new_row[sum_col - 1] = round(float(fact), 2)
-                    ws.append(new_row)
+                    if insert_row:
+                        ws.insert_rows(insert_row)
+                        ws.cell(row=insert_row, column=tt_col).value = tt_code
+                        ws.cell(row=insert_row, column=sum_col).value = round(float(fact), 2)
+                        insert_row += 1
+                    else:
+                        ws.append([None] * (tt_col - 1) + [tt_code] + [None] * (sum_col - tt_col - 1) + [round(float(fact), 2)])
                     unplanned_added += 1
 
         output = io.BytesIO()
