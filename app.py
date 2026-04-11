@@ -75,10 +75,9 @@ def find_columns(ws):
     return tt_col, sum_col, plan_col, dev_col, otklonenie_col, header_row
 
 def find_itogo_row(ws):
-    """Находим строку с Итого"""
     for row in ws.iter_rows():
         for cell in row:
-            if cell.value and str(cell.value).strip() == 'Итого':
+            if cell.value and str(cell.value).strip() == 'Итого' and cell.column == 1:
                 return cell.row
     return None
 
@@ -157,25 +156,44 @@ def update_excel():
                     row[dev_col - 1].value = round(accumulated[tt], 2)
                     dev_updated += 1
 
-        # Шаг 4 — добавляем внеплановые ТТ после строки Итого + 1
+        # Шаг 4 — добавляем внеплановые ТТ
         unplanned_added = 0
         debug_not_found = []
-        
-        itogo_row = find_itogo_row(ws)
-        insert_row = itogo_row + 2 if itogo_row else None
 
+        # Находим блок итогов — 4 строки менеджеров + Итого
+        itogo_row = find_itogo_row(ws)
+        first_summary_row = itogo_row - 4 if itogo_row else None
+
+        # Находим последнюю плановую ТТ (до блока итогов)
+        last_tt_row = header_row
+        if first_summary_row:
+            for row in ws.iter_rows(min_row=header_row + 1, max_row=first_summary_row - 1):
+                tt = str(row[tt_col - 1].value or '').strip()
+                if tt and tt.startswith('T') and len(tt) == 5:
+                    last_tt_row = row[0].row
+
+        # Список внеплановых для добавления
+        unplanned_to_add = []
         for tt_code, fact in updates_map.items():
             if tt_code not in found_codes:
                 debug_not_found.append(tt_code)
                 if tt_code in RESHETOVA_CODES and fact and float(fact) != 0:
-                    if insert_row:
-                        ws.insert_rows(insert_row)
-                        ws.cell(row=insert_row, column=tt_col).value = tt_code
-                        ws.cell(row=insert_row, column=sum_col).value = round(float(fact), 2)
-                        insert_row += 1
-                    else:
-                        ws.append([None] * (tt_col - 1) + [tt_code] + [None] * (sum_col - tt_col - 1) + [round(float(fact), 2)])
-                    unplanned_added += 1
+                    unplanned_to_add.append((tt_code, fact))
+
+        # Если не хватает пустых строк — вставляем перед блоком итогов
+        if first_summary_row:
+            free_rows = first_summary_row - last_tt_row - 1
+            if len(unplanned_to_add) > free_rows:
+                needed = len(unplanned_to_add) - free_rows
+                ws.insert_rows(first_summary_row, amount=needed)
+
+        # Записываем внеплановые
+        current_row = last_tt_row + 1
+        for tt_code, fact in unplanned_to_add:
+            ws.cell(row=current_row, column=tt_col).value = tt_code
+            ws.cell(row=current_row, column=sum_col).value = round(float(fact), 2)
+            current_row += 1
+            unplanned_added += 1
 
         output = io.BytesIO()
         wb.save(output)
