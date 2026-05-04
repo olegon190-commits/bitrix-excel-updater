@@ -69,10 +69,14 @@ RESHETOVA_CODES = set([
     'T8597', 'T8613', 'T8615', 'T8624', 'T8633', 'T8646', 'T8648', 'T8650', 'T8669', 'T8670',
     'T8680', 'T8688', 'T8726', 'T8754', 'T8760', 'T8771', 'T8778', 'T8785', 'T8788', 'T7201', 'T8888',
 ])
+HOLIDAYS = {
+    '2026-05-01', '2026-05-02', '2026-05-03',
+}
+
 def get_yesterday_sheet_name():
     MSK = timezone(timedelta(hours=3))
     d = datetime.now(MSK) - timedelta(days=1)
-    while d.weekday() >= 5:
+    while d.weekday() >= 5 or d.strftime('%Y-%m-%d') in HOLIDAYS:
         d = d - timedelta(days=1)
     day = d.day
     weekday = DAYS_RU[d.weekday()]
