@@ -71,6 +71,7 @@ RESHETOVA_CODES = set([
 ])
 HOLIDAYS = {
     '2026-05-01', '2026-05-02', '2026-05-03',
+    '2026-05-09', '2026-05-10', '2026-05-11',
 }
 
 def get_yesterday_sheet_name():
