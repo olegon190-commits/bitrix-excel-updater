@@ -148,7 +148,7 @@ def update_excel():
                 otklonenie = float(otklonenie)
                 accumulated[tt] = accumulated.get(tt, 0) + otklonenie
 
-        # Шаг 3 — записываем отклонения дня
+        # Шаг 3 — записываем отклонения дня (только положительные)
         dev_updated = 0
         if dev_col:
             for row in ws.iter_rows(min_row=header_row + 1):
@@ -190,6 +190,14 @@ def update_excel():
         for tt_code, fact in unplanned_to_add:
             ws.cell(row=current_row, column=tt_col).value = tt_code
             ws.cell(row=current_row, column=sum_col).value = round(float(fact), 2)
+            # Заполняем остальные колонки формулами через КОДЫ ТТ
+            tt_cell = f"{chr(64 + tt_col)}{current_row}"
+            ws.cell(row=current_row, column=3).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,2,FALSE),"")'
+            ws.cell(row=current_row, column=4).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,3,FALSE),"")'
+            ws.cell(row=current_row, column=5).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,4,FALSE),"")'
+            ws.cell(row=current_row, column=6).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,5,FALSE),"")'
+            ws.cell(row=current_row, column=10).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,6,FALSE),"")'
+            ws.cell(row=current_row, column=11).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,7,FALSE),"")'
             current_row += 1
             unplanned_added += 1
 
