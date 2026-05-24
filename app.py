@@ -155,7 +155,7 @@ def update_excel():
                 tt = str(row[tt_col - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
                 if not tt:
                     continue
-                if tt in accumulated and accumulated[tt] != 0:
+                if tt in accumulated and accumulated[tt] > 0:
                     row[dev_col - 1].value = round(accumulated[tt], 2)
                     dev_updated += 1
 
