@@ -50,18 +50,32 @@ def get_sheet_day(sheet_name):
     except:
         return None
 
-def get_previous_sheets(wb, today_sheet):
+def get_next_sheet_same_weekday(wb, today_sheet):
+    """Находит следующий лист с тем же днём недели"""
     today_day = get_sheet_day(today_sheet)
     if today_day is None:
-        return []
-    prev = []
+        return None
+    parts = today_sheet.split()
+    if len(parts) < 2:
+        return None
+    today_weekday = parts[1]  # например 'чт'
+
+    candidates = []
     for name in wb.sheetnames:
-        if name == 'Контроль':
+        if name in ('Контроль', 'КОДЫ ТТ'):
+            continue
+        name_parts = name.split()
+        if len(name_parts) < 2:
             continue
         day = get_sheet_day(name)
-        if day is not None and day < today_day:
-            prev.append(name)
-    return prev
+        weekday = name_parts[1]
+        if day is not None and day > today_day and weekday == today_weekday:
+            candidates.append((day, name))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0])
+    return candidates[0][1]  # ближайший следующий лист
 
 def find_columns(ws):
     tt_col = sum_col = plan_col = dev_col = otklonenie_col = header_row = None
@@ -127,37 +141,37 @@ def update_excel():
                 row[sum_col - 1].value = round(float(updates_map[tt]), 2)
                 updated += 1
 
-        # Шаг 2 — считаем накопленное отклонение через wb_readonly
-        prev_sheets = get_previous_sheets(wb, today_sheet)
-        accumulated = {}
+        # Шаг 2 — читаем отклонения из текущего листа (wb_readonly)
+        ws_ro = wb_readonly[today_sheet]
+        tt_col_ro, sum_col_ro, plan_col_ro, _, otklonenie_col_ro, header_row_ro = find_columns(ws_ro)
+        current_deviations = {}  # tt_code -> отклонение
 
-        for sheet_name in prev_sheets:
-            ws_prev = wb_readonly[sheet_name]
-            tt_col_p, sum_col_p, plan_col_p, _, otklonenie_col_p, header_row_p = find_columns(ws_prev)
-            if not header_row_p or not tt_col_p:
-                continue
-            if not otklonenie_col_p:
-                continue
-            for row in ws_prev.iter_rows(min_row=header_row_p + 1):
-                tt = str(row[tt_col_p - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
+        if otklonenie_col_ro and header_row_ro and tt_col_ro:
+            for row in ws_ro.iter_rows(min_row=header_row_ro + 1):
+                tt = str(row[tt_col_ro - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
                 if not tt:
                     continue
-                otklonenie = row[otklonenie_col_p - 1].value
+                otklonenie = row[otklonenie_col_ro - 1].value
                 if otklonenie is None or isinstance(otklonenie, str):
                     continue
                 otklonenie = float(otklonenie)
-                accumulated[tt] = accumulated.get(tt, 0) + otklonenie
+                if otklonenie > 0:
+                    current_deviations[tt] = otklonenie
 
-        # Шаг 3 — записываем отклонения дня (только положительные)
+        # Шаг 3 — записываем отклонения в следующий лист того же дня недели
         dev_updated = 0
-        if dev_col:
-            for row in ws.iter_rows(min_row=header_row + 1):
-                tt = str(row[tt_col - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
-                if not tt:
-                    continue
-                if tt in accumulated and accumulated[tt] > 0:
-                    row[dev_col - 1].value = round(accumulated[tt], 2)
-                    dev_updated += 1
+        next_sheet = get_next_sheet_same_weekday(wb, today_sheet)
+        if next_sheet and next_sheet in wb.sheetnames and current_deviations:
+            ws_next = wb[next_sheet]
+            tt_col_n, sum_col_n, plan_col_n, dev_col_n, _, header_row_n = find_columns(ws_next)
+            if dev_col_n and header_row_n and tt_col_n:
+                for row in ws_next.iter_rows(min_row=header_row_n + 1):
+                    tt = str(row[tt_col_n - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
+                    if not tt:
+                        continue
+                    if tt in current_deviations:
+                        row[dev_col_n - 1].value = round(current_deviations[tt], 2)
+                        dev_updated += 1
 
         # Шаг 4 — добавляем внеплановые ТТ
         unplanned_added = 0
@@ -214,11 +228,11 @@ def update_excel():
         return jsonify({
             'status': 'ok',
             'sheet': today_sheet,
+            'next_sheet': next_sheet,
             'updated_fact': updated,
             'updated_deviation': dev_updated,
             'unplanned_added': unplanned_added,
             'debug_not_found': debug_not_found,
-            'prev_sheets_processed': len(prev_sheets),
             'result': upload_r.json()
         })
 
