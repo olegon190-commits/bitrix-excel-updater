@@ -51,14 +51,13 @@ def get_sheet_day(sheet_name):
         return None
 
 def get_next_sheet_same_weekday(wb, today_sheet):
-    """Находит следующий лист с тем же днём недели"""
     today_day = get_sheet_day(today_sheet)
     if today_day is None:
         return None
     parts = today_sheet.split()
     if len(parts) < 2:
         return None
-    today_weekday = parts[1]  # например 'чт'
+    today_weekday = parts[1]
 
     candidates = []
     for name in wb.sheetnames:
@@ -75,7 +74,7 @@ def get_next_sheet_same_weekday(wb, today_sheet):
     if not candidates:
         return None
     candidates.sort(key=lambda x: x[0])
-    return candidates[0][1]  # ближайший следующий лист
+    return candidates[0][1]
 
 def find_columns(ws):
     tt_col = sum_col = plan_col = dev_col = otklonenie_col = header_row = None
@@ -141,10 +140,10 @@ def update_excel():
                 row[sum_col - 1].value = round(float(updates_map[tt]), 2)
                 updated += 1
 
-        # Шаг 2 — читаем отклонения из текущего листа (wb_readonly)
+        # Шаг 2 — читаем отклонения из текущего листа
         ws_ro = wb_readonly[today_sheet]
         tt_col_ro, sum_col_ro, plan_col_ro, _, otklonenie_col_ro, header_row_ro = find_columns(ws_ro)
-        current_deviations = {}  # tt_code -> отклонение
+        current_deviations = {}
 
         if otklonenie_col_ro and header_row_ro and tt_col_ro:
             for row in ws_ro.iter_rows(min_row=header_row_ro + 1):
@@ -187,12 +186,22 @@ def update_excel():
                 if tt and tt.startswith('T') and len(tt) == 5:
                     last_tt_row = row[0].row
 
+        # Читаем справочник КОДЫ ТТ для фильтрации по региону
+        region_codes = set()
+        if 'КОДЫ ТТ' in wb.sheetnames:
+            ws_ref = wb['КОДЫ ТТ']
+            for row in ws_ref.iter_rows(min_row=2):
+                tt = str(row[0].value or '').strip()
+                if tt.startswith('T'):
+                    region_codes.add(tt)
+
         unplanned_to_add = []
         for tt_code, fact in updates_map.items():
             if tt_code not in found_codes:
                 debug_not_found.append(tt_code)
                 if fact and float(fact) != 0:
-                    unplanned_to_add.append((tt_code, fact))
+                    if not region_codes or tt_code in region_codes:
+                        unplanned_to_add.append((tt_code, fact))
 
         if first_summary_row:
             free_rows = first_summary_row - last_tt_row - 1
@@ -204,7 +213,6 @@ def update_excel():
         for tt_code, fact in unplanned_to_add:
             ws.cell(row=current_row, column=tt_col).value = tt_code
             ws.cell(row=current_row, column=sum_col).value = round(float(fact), 2)
-            # Заполняем остальные колонки формулами через КОДЫ ТТ
             tt_cell = f"{chr(64 + tt_col)}{current_row}"
             ws.cell(row=current_row, column=3).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,2,FALSE),"")'
             ws.cell(row=current_row, column=4).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,3,FALSE),"")'
