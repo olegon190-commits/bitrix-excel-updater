@@ -14,6 +14,7 @@ DAYS_RU = {0: 'пн', 1: 'вт', 2: 'ср', 3: 'чт', 4: 'пт', 5: 'сб', 6: 
 HOLIDAYS = {
     '2026-05-01', '2026-05-02', '2026-05-03',
     '2026-05-09', '2026-05-10', '2026-05-11',
+    '2026-06-12',
 }
 
 def get_yesterday_sheet_name():
@@ -97,6 +98,35 @@ def find_itogo_row(ws):
                 return cell.row
     return None
 
+def build_region_codes_from_reference(tt_reference, file_name):
+    """Строим set кодов ТТ для данного региона из справочника FTP."""
+    if not tt_reference:
+        return set()
+
+    fname = file_name.lower()
+    if 'белгород' in fname:
+        keywords = ['белгородская область', 'старый оскол', 'воронеж-старый оскол']
+    elif 'брянск' in fname:
+        keywords = ['брянская область', 'орел ', 'орловская область', 'смоленская область', 'тула', 'калуга']
+    elif 'курск' in fname:
+        keywords = ['курская область', 'городская доставка', 'самовывоз со склада']
+    elif 'липецк' in fname:
+        keywords = ['липецк']
+    else:
+        return set()
+
+    codes = set()
+    for row in tt_reference:
+        route = (row.get('МаршрутТТ') or '').lower()
+        tt = str(row.get('КодТорговойТочки') or '').strip()
+        if not tt or not route:
+            continue
+        for kw in keywords:
+            if kw in route:
+                codes.add(tt)
+                break
+    return codes
+
 @app.route('/update-excel', methods=['POST'])
 def update_excel():
     try:
@@ -104,10 +134,12 @@ def update_excel():
         webhook = data.get('webhook')
         file_id = data.get('file_id')
         updates = data.get('updates')
+        tt_reference = data.get('tt_reference')  # справочник из FTP (опционально)
 
         r = requests.get(f'{webhook}/disk.file.get.json?id={file_id}')
         file_info = r.json()
         download_url = file_info['result']['DOWNLOAD_URL']
+        file_name = file_info['result']['NAME']
 
         r = requests.get(download_url)
         clean_content = load_workbook_safe(r.content)
@@ -172,7 +204,20 @@ def update_excel():
                         row[dev_col_n - 1].value = round(current_deviations[tt], 2)
                         dev_updated += 1
 
-        # Шаг 4 — добавляем внеплановые ТТ
+        # Шаг 4 — определяем region_codes
+        # Приоритет: справочник FTP > лист КОДЫ ТТ в Excel
+        if tt_reference:
+            region_codes = build_region_codes_from_reference(tt_reference, file_name)
+        else:
+            region_codes = set()
+            if 'КОДЫ ТТ' in wb.sheetnames:
+                ws_ref = wb['КОДЫ ТТ']
+                for row in ws_ref.iter_rows(min_row=2):
+                    tt = str(row[0].value or '').strip()
+                    if tt.startswith('T'):
+                        region_codes.add(tt)
+
+        # Шаг 5 — добавляем внеплановые ТТ
         unplanned_added = 0
         debug_not_found = []
 
@@ -185,15 +230,6 @@ def update_excel():
                 tt = str(row[tt_col - 1].value or '').strip()
                 if tt and tt.startswith('T') and len(tt) == 5:
                     last_tt_row = row[0].row
-
-        # Читаем справочник КОДЫ ТТ для фильтрации по региону
-        region_codes = set()
-        if 'КОДЫ ТТ' in wb.sheetnames:
-            ws_ref = wb['КОДЫ ТТ']
-            for row in ws_ref.iter_rows(min_row=2):
-                tt = str(row[0].value or '').strip()
-                if tt.startswith('T'):
-                    region_codes.add(tt)
 
         unplanned_to_add = []
         for tt_code, fact in updates_map.items():
