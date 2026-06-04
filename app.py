@@ -5,6 +5,9 @@ import zipfile
 import re
 import traceback
 import base64
+import os
+import json
+import ftplib
 from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
@@ -14,7 +17,61 @@ DAYS_RU = {0: 'пн', 1: 'вт', 2: 'ср', 3: 'чт', 4: 'пт', 5: 'сб', 6: 
 HOLIDAYS = {
     '2026-05-01', '2026-05-02', '2026-05-03',
     '2026-05-09', '2026-05-10', '2026-05-11',
+    '2026-06-12',
 }
+
+def get_tt_reference_from_ftp():
+    """Скачиваем справочник ТТ с FTP."""
+    try:
+        host = os.environ.get('FTP_HOST', '185.123.193.181')
+        port = int(os.environ.get('FTP_PORT', 38021))
+        user = os.environ.get('FTP_USER', 'контроль')
+        password = os.environ.get('FTP_PASS', '147258369')
+
+        ftp = ftplib.FTP()
+        ftp.connect(host, port, timeout=30)
+        ftp.login(user, password)
+        ftp.set_pasv(True)
+
+        buffer = io.BytesIO()
+        ftp.retrbinary('RETR /OData/OData_83_ТТ.txt', buffer.write)
+        ftp.quit()
+
+        buffer.seek(0)
+        text = buffer.read().decode('utf-8-sig')
+        return json.loads(text)
+    except Exception as e:
+        print(f'FTP error: {e}')
+        return None
+
+def build_region_codes_from_reference(tt_reference, file_name):
+    """Строим set кодов ТТ для данного региона из справочника FTP."""
+    if not tt_reference:
+        return set()
+
+    fname = file_name.lower()
+    if 'белгород' in fname:
+        keywords = ['белгородская область', 'старый оскол', 'воронеж-старый оскол']
+    elif 'брянск' in fname:
+        keywords = ['брянская область', 'орел ', 'орловская область', 'смоленская область', 'тула', 'калуга']
+    elif 'курск' in fname:
+        keywords = ['курская область', 'городская доставка', 'самовывоз со склада']
+    elif 'липецк' in fname:
+        keywords = ['липецк', 'воронеж-липецк']
+    else:
+        return set()
+
+    codes = set()
+    for row in tt_reference:
+        route = (row.get('МаршрутТТ') or '').lower()
+        tt = str(row.get('КодТорговойТочки') or '').strip()
+        if not tt or not route:
+            continue
+        for kw in keywords:
+            if kw in route:
+                codes.add(tt)
+                break
+    return codes
 
 def get_yesterday_sheet_name():
     MSK = timezone(timedelta(hours=3))
@@ -108,6 +165,7 @@ def update_excel():
         r = requests.get(f'{webhook}/disk.file.get.json?id={file_id}')
         file_info = r.json()
         download_url = file_info['result']['DOWNLOAD_URL']
+        file_name = file_info['result']['NAME']
 
         r = requests.get(download_url)
         clean_content = load_workbook_safe(r.content)
@@ -157,7 +215,7 @@ def update_excel():
                 if otklonenie > 0:
                     current_deviations[tt] = otklonenie
 
-        # Шаг 3 — записываем отклонения в следующий лист того же дня недели
+        # Шаг 3 — записываем отклонения в следующий лист
         dev_updated = 0
         next_sheet = get_next_sheet_same_weekday(wb, today_sheet)
         if next_sheet and next_sheet in wb.sheetnames and current_deviations:
@@ -172,7 +230,21 @@ def update_excel():
                         row[dev_col_n - 1].value = round(current_deviations[tt], 2)
                         dev_updated += 1
 
-        # Шаг 4 — добавляем внеплановые ТТ
+        # Шаг 4 — скачиваем справочник ТТ с FTP и определяем region_codes
+        tt_reference = get_tt_reference_from_ftp()
+        if tt_reference:
+            region_codes = build_region_codes_from_reference(tt_reference, file_name)
+        else:
+            # Fallback — читаем из листа КОДЫ ТТ в Excel
+            region_codes = set()
+            if 'КОДЫ ТТ' in wb.sheetnames:
+                ws_ref = wb['КОДЫ ТТ']
+                for row in ws_ref.iter_rows(min_row=2):
+                    tt = str(row[0].value or '').strip()
+                    if tt.startswith('T'):
+                        region_codes.add(tt)
+
+        # Шаг 5 — добавляем внеплановые ТТ
         unplanned_added = 0
         debug_not_found = []
 
@@ -185,15 +257,6 @@ def update_excel():
                 tt = str(row[tt_col - 1].value or '').strip()
                 if tt and tt.startswith('T') and len(tt) == 5:
                     last_tt_row = row[0].row
-
-        # Читаем справочник КОДЫ ТТ для фильтрации по региону
-        region_codes = set()
-        if 'КОДЫ ТТ' in wb.sheetnames:
-            ws_ref = wb['КОДЫ ТТ']
-            for row in ws_ref.iter_rows(min_row=2):
-                tt = str(row[0].value or '').strip()
-                if tt.startswith('T'):
-                    region_codes.add(tt)
 
         unplanned_to_add = []
         for tt_code, fact in updates_map.items():
@@ -241,6 +304,7 @@ def update_excel():
             'updated_deviation': dev_updated,
             'unplanned_added': unplanned_added,
             'debug_not_found': debug_not_found,
+            'ftp_reference_loaded': tt_reference is not None,
             'result': upload_r.json()
         })
 
