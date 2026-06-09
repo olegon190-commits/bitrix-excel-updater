@@ -38,11 +38,17 @@ def get_tt_reference_from_ftp():
         ftp.quit()
 
         buffer.seek(0)
-        text = buffer.read().decode('utf-8-sig')
-        # Убираем управляющие символы которые ломают JSON парсинг
+        raw = buffer.read()
+        text = raw.decode('utf-8-sig', errors='ignore')
         import re as _re
-        text = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
-        return json.loads(text)
+        # Убираем переносы строк внутри JSON строк и управляющие символы
+        text = text.replace('\r\n', ' ').replace('\r', ' ')
+        text = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+        try:
+            return json.loads(text)
+        except Exception:
+            text2 = ''.join(c for c in text if c.isprintable() or c in '\t\n\r')
+            return json.loads(text2)
     except Exception as e:
         print(f'FTP error: {e}')
         return None
