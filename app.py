@@ -248,6 +248,17 @@ def update_excel():
         unplanned_added = 0
         debug_not_found = []
 
+        # Строим словарь из справочника FTP: код → {название, маршрут}
+        tt_info_map = {}
+        if tt_reference:
+            for row in tt_reference:
+                code = str(row.get('КодТорговойТочки') or '').strip()
+                if code:
+                    tt_info_map[code] = {
+                        'name': str(row.get('НаименованиеТТ') or '').strip().replace(';', ','),
+                        'route': str(row.get('МаршрутТТ') or '').strip()
+                    }
+
         itogo_row = find_itogo_row(ws)
         first_summary_row = itogo_row - 4 if itogo_row else None
 
@@ -276,13 +287,26 @@ def update_excel():
         for tt_code, fact in unplanned_to_add:
             ws.cell(row=current_row, column=tt_col).value = tt_code
             ws.cell(row=current_row, column=sum_col).value = round(float(fact), 2)
+
+            # Заполняем из справочника FTP если есть
+            info = tt_info_map.get(tt_code, {})
             tt_cell = f"{chr(64 + tt_col)}{current_row}"
-            ws.cell(row=current_row, column=3).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,2,FALSE),"")'
-            ws.cell(row=current_row, column=4).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,3,FALSE),"")'
-            ws.cell(row=current_row, column=5).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,4,FALSE),"")'
-            ws.cell(row=current_row, column=6).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,5,FALSE),"")'
-            ws.cell(row=current_row, column=10).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,6,FALSE),"")'
-            ws.cell(row=current_row, column=11).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,7,FALSE),"")'
+
+            if info.get('route'):
+                ws.cell(row=current_row, column=3).value = info['route']  # Маршрут
+            else:
+                ws.cell(row=current_row, column=3).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,2,FALSE),"")'
+
+            ws.cell(row=current_row, column=4).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,3,FALSE),"")'  # Склад
+            ws.cell(row=current_row, column=5).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,4,FALSE),"")'  # Контрагенты
+
+            if info.get('name'):
+                ws.cell(row=current_row, column=6).value = info['name']  # ТТ
+            else:
+                ws.cell(row=current_row, column=6).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,5,FALSE),"")'
+
+            ws.cell(row=current_row, column=10).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,6,FALSE),"")'  # МПП
+            ws.cell(row=current_row, column=11).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,7,FALSE),"")'  # АКБ
             current_row += 1
             unplanned_added += 1
 
