@@ -82,14 +82,27 @@ def build_region_codes_from_reference(tt_reference, file_name):
                 break
     return codes
 
-def get_yesterday_sheet_name():
+def get_sheet_name_for_mode(date_mode='yesterday'):
     MSK = timezone(timedelta(hours=3))
-    d = datetime.now(MSK) - timedelta(days=1)
-    while d.weekday() >= 5 or d.strftime('%Y-%m-%d') in HOLIDAYS:
-        d = d - timedelta(days=1)
+    now = datetime.now(MSK)
+    
+    if date_mode == 'today':
+        d = now
+        # Если сегодня выходной или праздник — не записываем
+        if d.weekday() >= 5 or d.strftime('%Y-%m-%d') in HOLIDAYS:
+            return None
+    else:
+        # yesterday — берём последний рабочий день
+        d = now - timedelta(days=1)
+        while d.weekday() >= 5 or d.strftime('%Y-%m-%d') in HOLIDAYS:
+            d = d - timedelta(days=1)
+    
     day = d.day
     weekday = DAYS_RU[d.weekday()]
     return f"{day:02d} {weekday}"
+
+def get_yesterday_sheet_name():
+    return get_sheet_name_for_mode('yesterday')
 
 def load_workbook_safe(content):
     zin = zipfile.ZipFile(io.BytesIO(content))
@@ -170,6 +183,11 @@ def update_excel():
         webhook = data.get('webhook')
         file_id = data.get('file_id')
         updates = data.get('updates')
+        date_mode = data.get('date_mode', 'yesterday')
+
+        today_sheet = get_sheet_name_for_mode(date_mode)
+        if today_sheet is None:
+            return jsonify({'status': 'skipped', 'message': 'Сегодня выходной или праздник, запись пропущена'})
 
         r = requests.get(f'{webhook}/disk.file.get.json?id={file_id}')
         file_info = r.json()
@@ -183,7 +201,6 @@ def update_excel():
         wb = openpyxl.load_workbook(io.BytesIO(clean_content))
         wb_readonly = openpyxl.load_workbook(io.BytesIO(clean_content), data_only=True)
 
-        today_sheet = get_yesterday_sheet_name()
         if today_sheet not in wb.sheetnames:
             return jsonify({'status': 'error', 'message': f'Вкладка {today_sheet} не найдена', 'sheets': wb.sheetnames}), 400
 
