@@ -304,10 +304,13 @@ def update_excel():
                         unplanned_to_add.append((tt_code, fact))
 
         if first_summary_row:
-            free_rows = first_summary_row - last_tt_row - 1
-            if len(unplanned_to_add) > free_rows:
-                needed = len(unplanned_to_add) - free_rows
-                ws.insert_rows(first_summary_row, amount=needed)
+            # Нужно место для: внеплановые + 1 пустая строка перед итоговым блоком
+            needed_rows = len(unplanned_to_add) + 1
+            available_rows = first_summary_row - last_tt_row - 1
+            if needed_rows > available_rows:
+                insert_count = needed_rows - available_rows
+                ws.insert_rows(first_summary_row, amount=insert_count)
+                first_summary_row += insert_count
 
         current_row = last_tt_row + 1
         for tt_code, fact in unplanned_to_add:
