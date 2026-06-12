@@ -238,7 +238,7 @@ def update_excel():
                 if otklonenie is None or isinstance(otklonenie, str):
                     continue
                 otklonenie = float(otklonenie)
-                if otklonenie > 0:
+                if otklonenie != 0:
                     current_deviations[tt] = otklonenie
 
         # Шаг 3 — записываем отклонения в следующий лист
@@ -256,19 +256,17 @@ def update_excel():
                         row[dev_col_n - 1].value = round(current_deviations[tt], 2)
                         dev_updated += 1
 
-        # Шаг 4 — скачиваем справочник ТТ с FTP и определяем region_codes
+        # Шаг 4 — скачиваем справочник ТТ с FTP (для названий/маршрутов внеплановых)
         tt_reference = get_tt_reference_from_ftp()
-        if tt_reference:
-            region_codes = build_region_codes_from_reference(tt_reference, file_name)
-        else:
-            # Fallback — читаем из листа КОДЫ ТТ в Excel
-            region_codes = set()
-            if 'КОДЫ ТТ' in wb.sheetnames:
-                ws_ref = wb['КОДЫ ТТ']
-                for row in ws_ref.iter_rows(min_row=2):
-                    tt = str(row[0].value or '').strip()
-                    if tt.startswith('T'):
-                        region_codes.add(tt)
+
+        # Регион определяем только по листу КОДЫ ТТ в Excel файле
+        region_codes = set()
+        if 'КОДЫ ТТ' in wb.sheetnames:
+            ws_ref = wb['КОДЫ ТТ']
+            for row in ws_ref.iter_rows(min_row=2):
+                tt = str(row[0].value or '').strip()
+                if tt.startswith('T'):
+                    region_codes.add(tt)
 
         # Шаг 5 — добавляем внеплановые ТТ
         unplanned_added = 0
