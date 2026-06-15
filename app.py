@@ -175,6 +175,18 @@ def find_itogo_row(ws):
                 return cell.row
     return None
 
+@app.route('/debug-date', methods=['GET'])
+def debug_date():
+    MSK = timezone(timedelta(hours=3))
+    now = datetime.now(MSK)
+    return jsonify({
+        'now_msk': now.isoformat(),
+        'weekday': now.weekday(),
+        'today_sheet': get_sheet_name_for_mode('today'),
+        'yesterday_sheet': get_sheet_name_for_mode('yesterday'),
+        'holidays': sorted(HOLIDAYS)
+    })
+
 @app.route('/update-excel', methods=['POST'])
 def update_excel():
     try:
