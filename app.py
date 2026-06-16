@@ -20,7 +20,6 @@ HOLIDAYS = {
 }
 
 def get_tt_reference_from_ftp():
-    """Скачиваем справочник ТТ с FTP."""
     try:
         host = os.environ.get('FTP_HOST', '185.123.193.181')
         port = int(os.environ.get('FTP_PORT', 38021))
@@ -40,7 +39,6 @@ def get_tt_reference_from_ftp():
         raw = buffer.read()
         text = raw.decode('utf-8-sig', errors='ignore')
         import re as _re
-        # Убираем переносы строк внутри JSON строк и управляющие символы
         text = text.replace('\r\n', ' ').replace('\r', ' ')
         text = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
         try:
@@ -52,50 +50,19 @@ def get_tt_reference_from_ftp():
         print(f'FTP error: {e}')
         return None
 
-def build_region_codes_from_reference(tt_reference, file_name):
-    """Строим set кодов ТТ для данного региона из справочника FTP."""
-    if not tt_reference:
-        return set()
-
-    fname = file_name.lower()
-    if 'белгород' in fname:
-        keywords = ['белгородская область', 'старый оскол', 'воронеж-старый оскол']
-    elif 'брянск' in fname:
-        keywords = ['брянская область', 'орел ', 'орловская область', 'смоленская область', 'тула', 'калуга']
-    elif 'курск' in fname:
-        keywords = ['курская область', 'городская доставка', 'самовывоз со склада']
-    elif 'липецк' in fname:
-        keywords = ['липецк', 'воронеж-липецк']
-    else:
-        return set()
-
-    codes = set()
-    for row in tt_reference:
-        route = (row.get('МаршрутТТ') or '').lower()
-        tt = str(row.get('КодТорговойТочки') or '').strip()
-        if not tt or not route:
-            continue
-        for kw in keywords:
-            if kw in route:
-                codes.add(tt)
-                break
-    return codes
-
 def get_sheet_name_for_mode(date_mode='yesterday'):
     MSK = timezone(timedelta(hours=3))
     now = datetime.now(MSK)
-    
+
     if date_mode == 'today':
         d = now
-        # Если сегодня выходной или праздник — не записываем
         if d.weekday() >= 5 or d.strftime('%Y-%m-%d') in HOLIDAYS:
             return None
     else:
-        # yesterday — берём последний рабочий день
         d = now - timedelta(days=1)
         while d.weekday() >= 5 or d.strftime('%Y-%m-%d') in HOLIDAYS:
             d = d - timedelta(days=1)
-    
+
     day = d.day
     weekday = DAYS_RU[d.weekday()]
     return f"{day:02d} {weekday}"
@@ -127,6 +94,31 @@ def get_sheet_day(sheet_name):
         return int(sheet_name.split()[0])
     except:
         return None
+
+def get_prev_sheets_same_weekday(wb, today_sheet):
+    """Возвращает список предыдущих листов того же дня недели (по возрастанию дня)."""
+    today_day = get_sheet_day(today_sheet)
+    if today_day is None:
+        return []
+    parts = today_sheet.split()
+    if len(parts) < 2:
+        return []
+    today_weekday = parts[1]
+
+    candidates = []
+    for name in wb.sheetnames:
+        if name in ('Контроль', 'КОДЫ ТТ'):
+            continue
+        name_parts = name.split()
+        if len(name_parts) < 2:
+            continue
+        day = get_sheet_day(name)
+        weekday = name_parts[1]
+        if day is not None and day < today_day and weekday == today_weekday:
+            candidates.append((day, name))
+
+    candidates.sort(key=lambda x: x[0])
+    return [name for _, name in candidates]
 
 def get_next_sheet_same_weekday(wb, today_sheet):
     today_day = get_sheet_day(today_sheet)
@@ -175,6 +167,18 @@ def find_itogo_row(ws):
                 return cell.row
     return None
 
+def build_deviation_formula(prev_sheets, tt_col_letter, row_num, otklonenie_col_letter, max_rows=300):
+    """Строим формулу VLOOKUP суммирующую Отклонение с предыдущих листов."""
+    if not prev_sheets:
+        return None
+    parts = []
+    for sheet in prev_sheets:
+        # IFERROR чтобы не ломалось если ТТ нет на том листе
+        parts.append(
+            f"IFERROR(VLOOKUP(${tt_col_letter}{row_num},'{sheet}'!$B$1:$R${max_rows},17,FALSE),0)"
+        )
+    return '=' + '+'.join(parts)
+
 @app.route('/debug-date', methods=['GET'])
 def debug_date():
     MSK = timezone(timedelta(hours=3))
@@ -210,7 +214,6 @@ def update_excel():
 
         import openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(clean_content))
-        wb_readonly = openpyxl.load_workbook(io.BytesIO(clean_content), data_only=True)
 
         if today_sheet not in wb.sheetnames:
             return jsonify({'status': 'error', 'message': f'Вкладка {today_sheet} не найдена', 'sheets': wb.sheetnames}), 400
@@ -235,30 +238,57 @@ def update_excel():
                 row[sum_col - 1].value = round(float(updates_map[tt]), 2)
                 updated += 1
 
-        # Шаг 2 и 3 удалены — Елена теперь сама заполняет "Отклонения дня"
-        # формулами VLOOKUP, суммирующими "Отклонение" с предыдущих листов
-        # того же дня недели. Запись отклонений нашим кодом перезатирала бы
-        # эти формулы, поэтому больше не выполняется.
+        # Шаг 2 — записываем формулу "Отклонения дня" в следующий лист
         dev_updated = 0
         next_sheet = get_next_sheet_same_weekday(wb, today_sheet)
 
-        # Шаг 4 — скачиваем справочник ТТ с FTP (для названий/маршрутов внеплановых)
+        # Получаем список предыдущих листов того же дня недели для следующего листа
+        if next_sheet and next_sheet in wb.sheetnames and dev_col:
+            ws_next = wb[next_sheet]
+            tt_col_n, _, _, dev_col_n, _, header_row_n = find_columns(ws_next)
+            # Предыдущие листы относительно next_sheet (включая today_sheet)
+            prev_sheets_for_next = get_prev_sheets_same_weekday(wb, next_sheet)
+
+            if dev_col_n and header_row_n and tt_col_n and prev_sheets_for_next:
+                tt_col_letter = chr(64 + tt_col_n)
+                otklonenie_col_letter = chr(64 + (otklonenie_col or 18))
+                for row in ws_next.iter_rows(min_row=header_row_n + 1):
+                    tt = str(row[tt_col_n - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
+                    if not tt or not tt.startswith('T'):
+                        continue
+                    # Проверяем что в ячейке нет уже формулы (не перезаписываем)
+                    current_val = row[dev_col_n - 1].value
+                    if current_val and str(current_val).startswith('='):
+                        continue
+                    formula = build_deviation_formula(
+                        prev_sheets_for_next, tt_col_letter, row[0].row,
+                        otklonenie_col_letter
+                    )
+                    if formula:
+                        row[dev_col_n - 1].value = formula
+                        dev_updated += 1
+
+        # Шаг 3 — определяем region_codes из всех плановых листов файла
         tt_reference = get_tt_reference_from_ftp()
 
-        # Регион определяем только по листу КОДЫ ТТ в Excel файле
         region_codes = set()
-        if 'КОДЫ ТТ' in wb.sheetnames:
-            ws_ref = wb['КОДЫ ТТ']
-            for row in ws_ref.iter_rows(min_row=2):
-                tt = str(row[0].value or '').strip()
-                if tt.startswith('T'):
+        skip_sheets = {'Контроль', 'КОДЫ ТТ', today_sheet}
+        for sheet_name in wb.sheetnames:
+            if sheet_name in skip_sheets:
+                continue
+            ws_plan = wb[sheet_name]
+            tt_col_p, _, _, _, _, header_row_p = find_columns(ws_plan)
+            if not tt_col_p or not header_row_p:
+                continue
+            for row in ws_plan.iter_rows(min_row=header_row_p + 1):
+                tt = str(row[tt_col_p - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
+                if tt and tt.startswith('T') and len(tt) == 5:
                     region_codes.add(tt)
 
-        # Шаг 5 — добавляем внеплановые ТТ
+        # Шаг 4 — добавляем внеплановые ТТ
         unplanned_added = 0
         debug_not_found = []
 
-        # Строим словарь из справочника FTP: код → {название, маршрут}
         tt_info_map = {}
         if tt_reference:
             for row in tt_reference:
@@ -271,18 +301,15 @@ def update_excel():
 
         itogo_row = find_itogo_row(ws)
 
-        # Находим последнюю строку с ТТ и первую пустую строку перед итоговым блоком
         last_tt_row = header_row
         first_empty_before_summary = None
 
         if itogo_row:
-            # Ищем снизу вверх от itogo_row — находим последнюю ТТ строку
             for r in range(itogo_row - 1, header_row, -1):
                 tt = str(ws.cell(row=r, column=tt_col).value or '').strip()
                 if tt and tt.startswith('T') and len(tt) == 5:
                     last_tt_row = r
                     break
-            # Первая пустая строка после последней ТТ = место для вставки
             first_empty_before_summary = last_tt_row + 1
 
         first_summary_row = first_empty_before_summary
@@ -296,7 +323,6 @@ def update_excel():
                         unplanned_to_add.append((tt_code, fact))
 
         if first_summary_row and itogo_row:
-            # Нужно место для: внеплановые + 1 пустая строка перед итоговым блоком
             needed_rows = len(unplanned_to_add) + 1
             available_rows = itogo_row - first_summary_row
             if needed_rows > available_rows:
@@ -308,25 +334,24 @@ def update_excel():
             ws.cell(row=current_row, column=tt_col).value = tt_code
             ws.cell(row=current_row, column=sum_col).value = round(float(fact), 2)
 
-            # Заполняем из справочника FTP если есть
             info = tt_info_map.get(tt_code, {})
             tt_cell = f"{chr(64 + tt_col)}{current_row}"
 
             if info.get('route'):
-                ws.cell(row=current_row, column=3).value = info['route']  # Маршрут
+                ws.cell(row=current_row, column=3).value = info['route']
             else:
                 ws.cell(row=current_row, column=3).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,2,FALSE),"")'
 
-            ws.cell(row=current_row, column=4).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,3,FALSE),"")'  # Склад
-            ws.cell(row=current_row, column=5).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,4,FALSE),"")'  # Контрагенты
+            ws.cell(row=current_row, column=4).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,3,FALSE),"")'
+            ws.cell(row=current_row, column=5).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,4,FALSE),"")'
 
             if info.get('name'):
-                ws.cell(row=current_row, column=6).value = info['name']  # ТТ
+                ws.cell(row=current_row, column=6).value = info['name']
             else:
                 ws.cell(row=current_row, column=6).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,5,FALSE),"")'
 
-            ws.cell(row=current_row, column=10).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,6,FALSE),"")'  # МПП
-            ws.cell(row=current_row, column=11).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,7,FALSE),"")'  # АКБ
+            ws.cell(row=current_row, column=10).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,6,FALSE),"")'
+            ws.cell(row=current_row, column=11).value = f'=IFERROR(VLOOKUP({tt_cell},\'КОДЫ ТТ\'!$A:$G,7,FALSE),"")'
             current_row += 1
             unplanned_added += 1
 
