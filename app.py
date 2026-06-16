@@ -235,37 +235,12 @@ def update_excel():
                 row[sum_col - 1].value = round(float(updates_map[tt]), 2)
                 updated += 1
 
-        # Шаг 2 — читаем отклонения из текущего листа
-        ws_ro = wb_readonly[today_sheet]
-        tt_col_ro, sum_col_ro, plan_col_ro, _, otklonenie_col_ro, header_row_ro = find_columns(ws_ro)
-        current_deviations = {}
-
-        if otklonenie_col_ro and header_row_ro and tt_col_ro:
-            for row in ws_ro.iter_rows(min_row=header_row_ro + 1):
-                tt = str(row[tt_col_ro - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
-                if not tt:
-                    continue
-                otklonenie = row[otklonenie_col_ro - 1].value
-                if otklonenie is None or isinstance(otklonenie, str):
-                    continue
-                otklonenie = float(otklonenie)
-                if otklonenie != 0:
-                    current_deviations[tt] = otklonenie
-
-        # Шаг 3 — записываем отклонения в следующий лист
+        # Шаг 2 и 3 удалены — Елена теперь сама заполняет "Отклонения дня"
+        # формулами VLOOKUP, суммирующими "Отклонение" с предыдущих листов
+        # того же дня недели. Запись отклонений нашим кодом перезатирала бы
+        # эти формулы, поэтому больше не выполняется.
         dev_updated = 0
         next_sheet = get_next_sheet_same_weekday(wb, today_sheet)
-        if next_sheet and next_sheet in wb.sheetnames and current_deviations:
-            ws_next = wb[next_sheet]
-            tt_col_n, sum_col_n, plan_col_n, dev_col_n, _, header_row_n = find_columns(ws_next)
-            if dev_col_n and header_row_n and tt_col_n:
-                for row in ws_next.iter_rows(min_row=header_row_n + 1):
-                    tt = str(row[tt_col_n - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
-                    if not tt:
-                        continue
-                    if tt in current_deviations:
-                        row[dev_col_n - 1].value = round(current_deviations[tt], 2)
-                        dev_updated += 1
 
         # Шаг 4 — скачиваем справочник ТТ с FTP (для названий/маршрутов внеплановых)
         tt_reference = get_tt_reference_from_ftp()
@@ -295,14 +270,22 @@ def update_excel():
                     }
 
         itogo_row = find_itogo_row(ws)
-        first_summary_row = itogo_row - 4 if itogo_row else None
 
+        # Находим последнюю строку с ТТ и первую пустую строку перед итоговым блоком
         last_tt_row = header_row
-        if first_summary_row:
-            for row in ws.iter_rows(min_row=header_row + 1, max_row=first_summary_row - 1):
-                tt = str(row[tt_col - 1].value or '').strip()
+        first_empty_before_summary = None
+
+        if itogo_row:
+            # Ищем снизу вверх от itogo_row — находим последнюю ТТ строку
+            for r in range(itogo_row - 1, header_row, -1):
+                tt = str(ws.cell(row=r, column=tt_col).value or '').strip()
                 if tt and tt.startswith('T') and len(tt) == 5:
-                    last_tt_row = row[0].row
+                    last_tt_row = r
+                    break
+            # Первая пустая строка после последней ТТ = место для вставки
+            first_empty_before_summary = last_tt_row + 1
+
+        first_summary_row = first_empty_before_summary
 
         unplanned_to_add = []
         for tt_code, fact in updates_map.items():
@@ -312,14 +295,13 @@ def update_excel():
                     if not region_codes or tt_code in region_codes:
                         unplanned_to_add.append((tt_code, fact))
 
-        if first_summary_row:
+        if first_summary_row and itogo_row:
             # Нужно место для: внеплановые + 1 пустая строка перед итоговым блоком
             needed_rows = len(unplanned_to_add) + 1
-            available_rows = first_summary_row - last_tt_row - 1
+            available_rows = itogo_row - first_summary_row
             if needed_rows > available_rows:
                 insert_count = needed_rows - available_rows
                 ws.insert_rows(first_summary_row, amount=insert_count)
-                first_summary_row += insert_count
 
         current_row = last_tt_row + 1
         for tt_code, fact in unplanned_to_add:
