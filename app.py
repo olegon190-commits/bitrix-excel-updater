@@ -200,9 +200,17 @@ def update_excel():
         updates = data.get('updates')
         date_mode = data.get('date_mode', 'yesterday')
 
+        MSK = timezone(timedelta(hours=3))
+        now_msk = datetime.now(MSK)
         today_sheet = get_sheet_name_for_mode(date_mode)
+        debug_info = {
+            'date_mode_received': date_mode,
+            'now_msk': now_msk.isoformat(),
+            'weekday': now_msk.weekday(),
+            'today_sheet_calculated': today_sheet
+        }
         if today_sheet is None:
-            return jsonify({'status': 'skipped', 'message': 'Сегодня выходной или праздник, запись пропущена'})
+            return jsonify({'status': 'skipped', 'message': 'Сегодня выходной или праздник, запись пропущена', 'debug': debug_info})
 
         r = requests.get(f'{webhook}/disk.file.get.json?id={file_id}')
         file_info = r.json()
@@ -375,6 +383,7 @@ def update_excel():
             'unplanned_added': unplanned_added,
             'debug_not_found': debug_not_found,
             'ftp_reference_loaded': tt_reference is not None,
+            'debug': debug_info,
             'result': upload_r.json()
         })
 
