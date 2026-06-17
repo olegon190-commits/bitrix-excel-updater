@@ -318,9 +318,10 @@ def update_excel():
         for tt_code, fact in updates_map.items():
             if tt_code not in found_codes:
                 debug_not_found.append(tt_code)
-                if fact and float(fact) != 0:
-                    if not region_codes or tt_code in region_codes:
-                        unplanned_to_add.append((tt_code, fact))
+                # Временно отключено до получения файла с РМ от Вадима
+                # if fact and float(fact) != 0:
+                #     if not region_codes or tt_code in region_codes:
+                #         unplanned_to_add.append((tt_code, fact))
 
         if first_summary_row and itogo_row:
             needed_rows = len(unplanned_to_add) + 1
