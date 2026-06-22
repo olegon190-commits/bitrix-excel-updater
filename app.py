@@ -95,14 +95,14 @@ def get_sheet_day(sheet_name):
     except:
         return None
 
-def get_prev_sheets_same_weekday(wb, today_sheet):
-    """Возвращает список предыдущих листов того же дня недели (по возрастанию дня)."""
+def get_last_prev_sheet_same_weekday(wb, today_sheet):
+    """Возвращает только последний предыдущий лист того же дня недели."""
     today_day = get_sheet_day(today_sheet)
     if today_day is None:
-        return []
+        return None
     parts = today_sheet.split()
     if len(parts) < 2:
-        return []
+        return None
     today_weekday = parts[1]
 
     candidates = []
@@ -117,8 +117,10 @@ def get_prev_sheets_same_weekday(wb, today_sheet):
         if day is not None and day < today_day and weekday == today_weekday:
             candidates.append((day, name))
 
+    if not candidates:
+        return None
     candidates.sort(key=lambda x: x[0])
-    return [name for _, name in candidates]
+    return candidates[-1][1]  # только последний
 
 def get_next_sheet_same_weekday(wb, today_sheet):
     today_day = get_sheet_day(today_sheet)
@@ -167,17 +169,11 @@ def find_itogo_row(ws):
                 return cell.row
     return None
 
-def build_deviation_formula(prev_sheets, tt_col_letter, row_num, otklonenie_col_letter, max_rows=300):
-    """Строим формулу VLOOKUP суммирующую Отклонение с предыдущих листов."""
-    if not prev_sheets:
+def build_deviation_formula(last_sheet, tt_col_letter, row_num, max_rows=300):
+    """Формула VLOOKUP из последнего предыдущего листа того же дня недели."""
+    if not last_sheet:
         return None
-    parts = []
-    for sheet in prev_sheets:
-        # IFERROR чтобы не ломалось если ТТ нет на том листе
-        parts.append(
-            f"IFERROR(VLOOKUP(${tt_col_letter}{row_num},'{sheet}'!$B$1:$R${max_rows},17,FALSE),0)"
-        )
-    return '=' + '+'.join(parts)
+    return f"=IFERROR(VLOOKUP(${tt_col_letter}{row_num},'{last_sheet}'!$B$1:$R${max_rows},17,FALSE),\"\")"
 
 @app.route('/debug-date', methods=['GET'])
 def debug_date():
@@ -250,27 +246,19 @@ def update_excel():
         dev_updated = 0
         next_sheet = get_next_sheet_same_weekday(wb, today_sheet)
 
-        # Получаем список предыдущих листов того же дня недели для следующего листа
         if next_sheet and next_sheet in wb.sheetnames and dev_col:
             ws_next = wb[next_sheet]
             tt_col_n, _, _, dev_col_n, _, header_row_n = find_columns(ws_next)
-            # Предыдущие листы относительно next_sheet (включая today_sheet)
-            prev_sheets_for_next = get_prev_sheets_same_weekday(wb, next_sheet)
+            last_prev_sheet = get_last_prev_sheet_same_weekday(wb, next_sheet)
 
-            if dev_col_n and header_row_n and tt_col_n and prev_sheets_for_next:
+            if dev_col_n and header_row_n and tt_col_n and last_prev_sheet:
                 tt_col_letter = chr(64 + tt_col_n)
-                otklonenie_col_letter = chr(64 + (otklonenie_col or 18))
                 for row in ws_next.iter_rows(min_row=header_row_n + 1):
                     tt = str(row[tt_col_n - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
                     if not tt or not tt.startswith('T'):
                         continue
-                    # Проверяем что в ячейке нет уже формулы (не перезаписываем)
-                    current_val = row[dev_col_n - 1].value
-                    if current_val and str(current_val).startswith('='):
-                        continue
                     formula = build_deviation_formula(
-                        prev_sheets_for_next, tt_col_letter, row[0].row,
-                        otklonenie_col_letter
+                        last_prev_sheet, tt_col_letter, row[0].row
                     )
                     if formula:
                         row[dev_col_n - 1].value = formula
