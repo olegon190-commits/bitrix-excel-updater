@@ -95,32 +95,22 @@ def get_sheet_day(sheet_name):
     except:
         return None
 
-def get_last_prev_sheet_same_weekday(wb, today_sheet):
-    """Возвращает только последний предыдущий лист того же дня недели."""
+def get_prev_sheets_7days(wb, today_sheet):
+    """Возвращает все листы за последние 7 календарных дней (по возрастанию дня)."""
     today_day = get_sheet_day(today_sheet)
     if today_day is None:
-        return None
-    parts = today_sheet.split()
-    if len(parts) < 2:
-        return None
-    today_weekday = parts[1]
+        return []
 
     candidates = []
     for name in wb.sheetnames:
         if name in ('Контроль', 'КОДЫ ТТ'):
             continue
-        name_parts = name.split()
-        if len(name_parts) < 2:
-            continue
         day = get_sheet_day(name)
-        weekday = name_parts[1]
-        if day is not None and day < today_day and weekday == today_weekday:
+        if day is not None and (today_day - 7) <= day < today_day:
             candidates.append((day, name))
 
-    if not candidates:
-        return None
     candidates.sort(key=lambda x: x[0])
-    return candidates[-1][1]  # только последний
+    return [name for _, name in candidates]
 
 def get_next_sheet_same_weekday(wb, today_sheet):
     today_day = get_sheet_day(today_sheet)
@@ -169,11 +159,16 @@ def find_itogo_row(ws):
                 return cell.row
     return None
 
-def build_deviation_formula(last_sheet, tt_col_letter, row_num, max_rows=300):
-    """Формула VLOOKUP из последнего предыдущего листа того же дня недели."""
-    if not last_sheet:
+def build_deviation_formula(prev_sheets, tt_col_letter, row_num, max_rows=300):
+    """Формула VLOOKUP суммирующая Отклонение за последние 7 дней."""
+    if not prev_sheets:
         return None
-    return f"=IFERROR(VLOOKUP(${tt_col_letter}{row_num},'{last_sheet}'!$B$1:$R${max_rows},17,FALSE),\"\")"
+    parts = []
+    for sheet in prev_sheets:
+        parts.append(
+            f"IFERROR(VLOOKUP(${tt_col_letter}{row_num},'{sheet}'!$B$1:$R${max_rows},17,FALSE),0)"
+        )
+    return '=' + '+'.join(parts)
 
 @app.route('/debug-date', methods=['GET'])
 def debug_date():
@@ -249,16 +244,16 @@ def update_excel():
         if next_sheet and next_sheet in wb.sheetnames and dev_col:
             ws_next = wb[next_sheet]
             tt_col_n, _, _, dev_col_n, _, header_row_n = find_columns(ws_next)
-            last_prev_sheet = get_last_prev_sheet_same_weekday(wb, next_sheet)
+            prev_sheets_7 = get_prev_sheets_7days(wb, next_sheet)
 
-            if dev_col_n and header_row_n and tt_col_n and last_prev_sheet:
+            if dev_col_n and header_row_n and tt_col_n and prev_sheets_7:
                 tt_col_letter = chr(64 + tt_col_n)
                 for row in ws_next.iter_rows(min_row=header_row_n + 1):
                     tt = str(row[tt_col_n - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
                     if not tt or not tt.startswith('T'):
                         continue
                     formula = build_deviation_formula(
-                        last_prev_sheet, tt_col_letter, row[0].row
+                        prev_sheets_7, tt_col_letter, row[0].row
                     )
                     if formula:
                         row[dev_col_n - 1].value = formula
