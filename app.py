@@ -243,7 +243,7 @@ def update_excel():
 
         if next_sheet and next_sheet in wb.sheetnames and dev_col:
             ws_next = wb[next_sheet]
-            tt_col_n, _, _, dev_col_n, _, header_row_n = find_columns(ws_next)
+            tt_col_n, _, plan_col_n, dev_col_n, _, header_row_n = find_columns(ws_next)
             prev_sheets_7 = get_prev_sheets_7days(wb, next_sheet)
 
             if dev_col_n and header_row_n and tt_col_n and prev_sheets_7:
@@ -251,6 +251,10 @@ def update_excel():
                 for row in ws_next.iter_rows(min_row=header_row_n + 1):
                     tt = str(row[tt_col_n - 1].value or '').strip().replace('\xa0', '').replace(' ', '')
                     if not tt or not tt.startswith('T'):
+                        continue
+                    # Только для ТТ у которых есть план на этот день
+                    plan_val = row[plan_col_n - 1].value if plan_col_n else None
+                    if not plan_val or float(str(plan_val).replace(',', '.') or 0) == 0:
                         continue
                     formula = build_deviation_formula(
                         prev_sheets_7, tt_col_letter, row[0].row
